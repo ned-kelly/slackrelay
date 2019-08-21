@@ -1,0 +1,25 @@
+version: '3'
+services:
+
+  slack-relay:
+    container_name: slack-relay
+    build: .
+
+    restart: always
+    privileged: true
+
+    volumes:
+      - ./conf/:/opt/slack-relay/conf
+
+    environment:
+      - CONFIG_FILE=/opt/slack-relay/conf/slackrelay.json
+
+      ## You MUST set these variables at a minimum to run the application.
+      #- BOT_TOKEN=
+      #- BOT_NAME=name_of_your_bot
+
+      ## Uncomment/set the following variables as required:
+      #- LOG_LEVEL=debug
+      #- MIRROR_BOTS=True
+      #- EMOJI_TO_CONFIRM=
+      #- SLEEP_MS=

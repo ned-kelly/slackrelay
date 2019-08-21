@@ -1,14 +1,14 @@
 #!/usr/bin/env python
- 
+
 # Module:   slackrelay
 # Date:     5th January 2017
 # Author:   Cristiano Giuffrida, giuffrida at cs dot vu dot nl
- 
+
 """slackrelay
- 
+
 Slack Relay Bot.
 """
- 
+
 __desc__ = "Slack Relay Bot"
 __version__ = "0.1"
 __author__ = "Cristiano Giuffrida"
@@ -132,6 +132,16 @@ class Bot:
           return Bot(user.id, user.name, user.image)
     err_exit(3, "Unable to find bot identity")
 
+  def lookupBot(sc, botId):
+    bots = sc.api_call(
+      "bots.info",
+      bot=botId
+    )
+
+    logging.debug("BOT INFO: %s" % bots)
+    return bots
+
+
 class Rule:
   def __init__(self, name, fTeam, fChannel, backend='echo', bURL=None):
     self.name=name
@@ -212,7 +222,8 @@ class Config:
     syntax = "Syntax: %s [rule-add json] [rule-del name] [rule-del-all] [rule-list] [help]" % prefix
     try:
       if cmd.startswith(' rule-add '):
-        args = cmd[10:].strip()
+        args = cmd[10:].strip().replace(u"“", "\"").replace(u"”", "\"")
+        logging.debug(args)
         ruleDict = json.loads(args)
         ruleDict['frontend-team'] = team.name
         ruleDict['frontend-channel'] = channel.name
@@ -246,7 +257,7 @@ class Config:
     if not os.path.isfile(self.file):
       self.store()
     with open(self.file, mode='rb') as f:
-      ruleSet = json.load(f)  
+      ruleSet = json.load(f)
     for d in ruleSet:
       r = Rule.fromDict(d)
       if not self.addRule(r):
@@ -255,7 +266,7 @@ class Config:
 
   def store(self):
     ruleSet = self.getRuleSet()
-    with open(self.file, mode='wb') as f:
+    with open(self.file, mode='w') as f:
       json.dump(ruleSet, f, indent=4, sort_keys=True)
 
 def err_exit(status, message):
@@ -264,12 +275,12 @@ def err_exit(status, message):
 
 def parse_args():
   """parse_args() -> args
-  
+
   Parse any command-line arguments..
   """
 
   parser = argparse.ArgumentParser(description=__desc__)
-  
+
   parser.add_argument("-l", "--log",
     default="warning", choices=['debug', 'info', 'warning', 'error'],
     help="Log level")
@@ -293,11 +304,15 @@ def parse_args():
     default=100,
     help="Polling interval (ms)")
 
+  parser.add_argument("-mb", "--mirror-bots",
+    default=False,
+    help="Mirrors messages from bots, as well as users when relaying messages with the 'slack-iwh' rule.")
+
   parser.add_argument("-v", "--version",
     action='version', version=__version__)
-  
+
   parser.add_argument("bot_user_token")
-  
+
   args = parser.parse_args()
 
   return args
@@ -353,29 +368,44 @@ def main():
       logging.warning("Reconnecting to bot..")
       (bot,team,sc) = connect_to_bot(args.bot_user_token, args.bot)
     for part in response:
+      logging.debug(part)
       # Skip nonmessages and bot messages
       if len(part) == 0:
+        logging.debug("part length is 0!")
         continue
       if 'type' not in part:
         logging.warning("Type not in part: %s" % str(part))
       if 'type' in part and part['type'] != 'message':
+        logging.debug("'type' in part and part['type'] != 'message'")
         continue
-      if 'bot_id' in part:
-        continue
+      if args.mirror_bots == False:
+        if 'bot_id' in part:
+          logging.debug("'bot_id' in part")
+          continue
       if 'previous_message' in part and 'bot_id' in part['previous_message']:
+        logging.debug("'previous_message' in part and 'bot_id' in part['previous_message']")
         continue
+
+      logging.debug(response)
 
       # Lookup event channel
       logging.debug("New event: %s" % part)
       channel = Channel.lookup(sc, team, part['channel'])
 
       # Handle @slackrelay commands
-      if not 'subtype' in part and part['text'].startswith(bot.commandPrefix):
-        if args.slave:
-          logging.warning('Skipping command "%s" (slave mode)' % part['text'])
-        else:
-          ret = config.handleCommand(team, channel, part['text'], bot.commandPrefix)
-          sc.api_call("chat.postMessage", channel=part['channel'], text=ret, username=bot.name, icon_url=bot.image)
+      try:
+        if not 'subtype' in part and part['text'].startswith(bot.commandPrefix):
+          if args.slave:
+            logging.warning('Skipping command "%s" (slave mode)' % part['text'])
+          else:
+            ret = config.handleCommand(team, channel, part['text'], bot.commandPrefix)
+            sc.api_call("chat.postMessage", channel=part['channel'], text=ret, username=bot.name, icon_url=bot.image)
+          continue
+      except:
+        continue
+
+        ret = config.handleCommand(team, channel, part['text'], bot.commandPrefix)
+        sc.api_call("chat.postMessage", channel=part['channel'], text=ret, username=bot.name, icon_url=bot.image)
         continue
 
       # See if we have any matching rules
@@ -391,8 +421,12 @@ def main():
       # Determine user and text
       user = None
       text = None
+      isOtherBot = False
       if 'subtype' in part:
         mtype = part['subtype']
+
+        logging.debug("TYPE: %s" % mtype)
+
         if mtype == 'message_deleted':
           user = User.lookup(sc, team, part['previous_message']['user'])
           text = '[DELETED] %s' % part['previous_message']['text']
@@ -401,12 +435,26 @@ def main():
           text = '[EDITED] %s -> %s' % (part['previous_message']['text'], part['message']['text'])
         elif mtype == 'me_message':
           part['text'] = "/me %s" % part['text']
+        elif args.mirror_bots != False and mtype == 'bot_message':
+          part['text'] = part['text']
+          isOtherBot = True
         else:
           logging.warning("Unhandled message, skipping")
           continue
       if not user:
-        user = User.lookup(sc, team, part['user'])
-        text = part['text']
+        if isOtherBot == False:
+          user = User.lookup(sc, team, part['user'])
+          text = part['text']
+        if isOtherBot == True:
+          CurrentBot = Bot.lookupBot(sc, part['bot_id'])
+          class botUser:
+            fullName = CurrentBot['bot']['name'] + "@" + team.name
+            image = CurrentBot['bot']['icons']['image_72']
+          user = botUser
+          try:
+            text = part['attachments'][0]['fallback']
+          except:
+            continue
 
       for p in usernamePattern.findall(text):
         src = p
@@ -428,9 +476,9 @@ def main():
               "icon_url": user.image
             }
             req = requests.post(r.bURL, json.dumps(payload), headers={'content-type': 'application/json'})
-            req = req.ok          
+            req = req.ok
           else:
-            req = sc.api_call("chat.postMessage", channel=part['channel'], text=text, username=user.fullName, icon_url=user.image)   
+            req = sc.api_call("chat.postMessage", channel=part['channel'], text=text, username=user.fullName, icon_url=user.image)
             req = req['ok']
         except Exception:
           print(traceback.format_exc())

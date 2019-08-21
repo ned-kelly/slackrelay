@@ -29,6 +29,7 @@ optional arguments:
                         configuration
   -f CONFIG_FILE, --config-file CONFIG_FILE
                         Configuration file
+  -mb, --mirror-bots True|False  Option to relay messages from other Bots (such as your Build server Notifications) 
   -e EMOJI_TO_CONFIRM, --emoji-to-confirm EMOJI_TO_CONFIRM
                         Emoji that relayed messages will be updated with
                         (reacted to) to show confirmation to humans, e.g.
@@ -65,6 +66,11 @@ Test message2
 @slackrelay rule-list
 Test message3
 ```
+
+Docker Usage / Running in Production
+------------------------------------
+
+A Dockerfile and docker-compose file has been included for ease of deployment... Simply `vi docker-compose.yml` and then run `docker-compose up -d` to start the container on a server. 
 
 Contribute
 ----------
